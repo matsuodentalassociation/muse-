@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>muse モックアップv10</title>
+<title>muse モックアップv11</title>
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box}
@@ -34,7 +34,8 @@ input[type=range]{width:100%}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
 .modal-box{background:#161d26;border:1px solid #2a3643;border-radius:12px;padding:18px;max-width:420px;width:100%;display:flex;flex-direction:column;gap:12px}
 .pick-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid #2a3643;padding:6px 0}
-#black-screen{position:fixed;inset:0;background:#000;z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+#black-screen{position:fixed;inset:0;background:#000;z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+#btn-rec-stop{touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 #black-clock{font-size:34px;color:#3d4753}
 video{width:100%;border-radius:12px;background:#000}
 .scan-frame{border:2px solid #4a90d9;border-radius:12px;height:120px;display:flex;align-items:center;justify-content:center;color:#9aa5b1}
@@ -55,13 +56,13 @@ audio{width:100%}
     var raw = localStorage.getItem("slm_boot_html");
     var ver = localStorage.getItem("slm_boot_ver") || "";
     var m = /モックアップv(\d+)/.exec(ver);
-    if (raw && m && parseInt(m[1], 10) > 10) {
+    if (raw && m && parseInt(m[1], 10) > 11) {
       document.open(); document.write(raw); document.close();
     }
   } catch (e) { /* 通常の開き方に落ちる */ }
 })();
 </script>
-<script src="./ort.min.js?v=10"></script>
+<script src="./ort.min.js?v=11"></script>
 </head>
 <body>
 <p id="fatal-msg" class="err" hidden></p>
@@ -81,7 +82,7 @@ audio{width:100%}
 <button id="btn-to-mail" type="button">③ メールの情報を読み込む</button>
 <button id="btn-start" type="button">④ 睡眠記録を始める</button>
 <div class="card">
-<div class="field"><span>現在のバージョン</span><b>モックアップv10</b></div>
+<div class="field"><span>現在のバージョン</span><b>モックアップv11</b></div>
 <button id="btn-update" class="sub" type="button">アプリの更新</button>
 </div>
 <p id="home-msg" class="err" hidden></p>
@@ -258,18 +259,18 @@ audio{width:100%}
 
 <script>
 "use strict";
-/* muse モックアップv10：清書（2026-11-14）の画面の枠に、V13の形の録音ロジックを入れた版（起動の画面名の直し）。
+/* muse モックアップv11：清書（2026-11-14）の画面の枠に、V13の形の録音ロジックを入れた版（起動の画面名の直し）。
    録音は生のPCMで保持し、圧縮は出力の時だけ。スライダーは保存する音に掛けない。 */
 
 /* ===== 版と更新 ===== */
-const APP_VERSION = "モックアップv10";
-const APP = "SomnoLogMockupV10";
+const APP_VERSION = "モックアップv11";
+const APP = "SomnoLogMockupV11";
 const UPD_REPO = "matsuodentalassociation/ST-mock-up";
 
 /* ===== 録音の定数（1か所に集約。検知の数は未決のため初期値は本番の現行値） ===== */
 const SR = 16000, FRAME = 512;
 const RING_SEC = 130;
-const VAD_CTX = 64, VAD_TH = 0.3, VAD_URL = "./silero_vad.onnx?v=10";
+const VAD_CTX = 64, VAD_TH = 0.3, VAD_URL = "./silero_vad.onnx?v=11";
 const LOUD_DB = 6, SEG_MIN = 0.5, SEG_MAX = 4, QUIET_FRAMES = 5;
 const PRE_MS = 3000, POST_MS = 5000;
 const CALIB_SEC = 300, BASE_EVERY = 600, POOL_MAX = 600, POOL_MIN = 60;
@@ -1207,7 +1208,7 @@ async function startRec() {
     counts: newCounts(), app: APP, micMode: S.micMode,
     patient: { ...S.patient }
   };
-  await DB.put("sessions", S.sess);
+  await Promise.race([DB.put("sessions", S.sess), new Promise((r) => setTimeout(r, 3000))]);
   S.running = true;
   await acquireWake();
   startKeepAlive();
@@ -1223,30 +1224,37 @@ async function stopRec() {
   msg("rec-msg", "停止しています…");
   S.timers.forEach(clearInterval);
   S.timers = [];
-  const stopDeadline = Date.now() + 5000;
-  for (let i = 0; i < 200 && S.queue.length && Date.now() < stopDeadline; i++) {
-    await pump();
-    if (S.queue.length && !S.busy) break;
-    if (S.queue.length) await new Promise((r) => setTimeout(r, 5));
-  }
+  const waitOr = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(r, ms))]);
+  const drain = (async () => {
+    for (let i = 0; i < 200 && S.queue.length; i++) {
+      await pump();
+      if (S.queue.length && !S.busy) break;
+      if (S.queue.length) await new Promise((r) => setTimeout(r, 5));
+    }
+  })();
+  await waitOr(drain, 5000);
   stopKeepAlive();
   S.running = false;
   S.epoch++;
   S.queue = [];
+  // 止まったことは、保存を待たずに先に画面へ出す。
+  syncRec();
+  msg("rec-msg", "止めています…（保存の仕上げ中）");
   if (S.cand) { closeCand(S.cand); S.cand = null; }
   if (S.bucket) { finishSecond(S.bucket); S.bucket = null; }
   tickPending(Infinity);
-  await Promise.all(S.pendingWrites.splice(0));
-  await flushSecs();
+  await waitOr(Promise.all(S.pendingWrites.splice(0)), 4000);
+  await waitOr(flushSecs(), 3000);
   S.sess.endedAt = Date.now();
   S.sess.counts = { ...S.counts };
-  await DB.put("sessions", S.sess).catch(console.error);
+  await waitOr(DB.put("sessions", S.sess).catch(console.error), 3000);
   releaseWake();
   exitBlack();
   S.stopping = false;
   syncRec();
   if (S.clipFailed > 0) msg("rec-msg", "音声の保存に失敗したものが " + S.clipFailed + " 件あります。その音は共有できません。");
-  openDetail(S.sess.id);
+  try { await openDetail(S.sess.id); }
+  catch (e) { console.error(e); msg("rec-msg", "記録は止まりました。詳細を開けませんでした。"); }
 }
 
 /* ===== 画面の配線 ===== */
@@ -1394,6 +1402,9 @@ $("btn-rec-stop").addEventListener("pointerdown", (e) => {
 $("btn-rec-stop").addEventListener("pointerup", () => { if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; } });
 $("btn-rec-stop").addEventListener("pointerleave", () => { if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; } });
 $("btn-rec-stop").addEventListener("pointercancel", () => { if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; } });
+$("btn-rec-stop").addEventListener("click", () => {
+  if (S.running && !S.stopping) msg("rec-msg", "止める時は、ボタンを2秒以上押し続けてください。");
+});
 
 /* 黒画面 */
 let blackTimer = null, clockTimer = null;
