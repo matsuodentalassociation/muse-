@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>muse モックアップv4</title>
+<title>muse モックアップv5</title>
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box}
@@ -54,13 +54,13 @@ audio{width:100%}
     var raw = localStorage.getItem("slm_boot_html");
     var ver = localStorage.getItem("slm_boot_ver") || "";
     var m = /モックアップv(\d+)/.exec(ver);
-    if (raw && m && parseInt(m[1], 10) > 4) {
+    if (raw && m && parseInt(m[1], 10) > 5) {
       document.open(); document.write(raw); document.close();
     }
   } catch (e) { /* 通常の開き方に落ちる */ }
 })();
 </script>
-<script src="./ort.min.js?v=4"></script>
+<script src="./ort.min.js?v=5"></script>
 </head>
 <body>
 <p id="fatal-msg" class="err" hidden></p>
@@ -80,7 +80,7 @@ audio{width:100%}
 <button id="btn-to-mail" type="button">③ メールの情報を読み込む</button>
 <button id="btn-start" type="button">④ 睡眠記録を始める</button>
 <div class="card">
-<div class="field"><span>現在のバージョン</span><b>モックアップv4</b></div>
+<div class="field"><span>現在のバージョン</span><b>モックアップv5</b></div>
 <button id="btn-update" class="sub" type="button">アプリの更新</button>
 </div>
 <p id="home-msg" class="err" hidden></p>
@@ -256,18 +256,18 @@ audio{width:100%}
 
 <script>
 "use strict";
-/* muse モックアップv4：清書（2026-11-14）の画面の枠に、V13の形の録音ロジックを入れた版（v3の起動の直し）。
+/* muse モックアップv5：清書（2026-11-14）の画面の枠に、V13の形の録音ロジックを入れた版（起動の画面名の直し）。
    録音は生のPCMで保持し、圧縮は出力の時だけ。スライダーは保存する音に掛けない。 */
 
 /* ===== 版と更新 ===== */
-const APP_VERSION = "モックアップv4";
+const APP_VERSION = "モックアップv5";
 const APP = "SomnoLogMockupV3";
 const UPD_REPO = "matsuodentalassociation/ST-mock-up";
 
 /* ===== 録音の定数（1か所に集約。検知の数は未決のため初期値は本番の現行値） ===== */
 const SR = 16000, FRAME = 512;
 const RING_SEC = 130;
-const VAD_CTX = 64, VAD_TH = 0.3, VAD_URL = "./silero_vad.onnx?v=4";
+const VAD_CTX = 64, VAD_TH = 0.3, VAD_URL = "./silero_vad.onnx?v=5";
 const LOUD_DB = 6, SEG_MIN = 0.5, SEG_MAX = 4, QUIET_FRAMES = 5;
 const PRE_MS = 3000, POST_MS = 5000;
 const CALIB_SEC = 300, BASE_EVERY = 600, POOL_MAX = 600, POOL_MIN = 60;
@@ -327,7 +327,7 @@ window.addEventListener("unhandledrejection", (e) => showFatal((e.reason && e.re
 
 /* ===== 状態 ===== */
 const S = {
-  page: "welcome",
+  page: "perm",
   perms: false, refDone: false,
   patient: null, ref: null,
   gainDb: 0, calDb: 0,
@@ -401,7 +401,7 @@ const DB = (() => {
 })();
 
 /* ===== 画面遷移 ===== */
-const PAGES = ["welcome", "home", "scan", "mail", "confirm", "setup1", "setup2", "record", "review", "share"];
+const PAGES = ["perm", "home", "scan", "mail", "confirm", "setup1", "setup2", "record", "review", "share"];
 function showPage(name) {
   S.page = name;
   for (const p of PAGES) { const el = $("page-" + p); if (el) el.hidden = p !== name; }
@@ -1145,7 +1145,7 @@ function stopKeepAlive() {
 }
 async function startRec() {
   if (S.running) return;
-  if (!S.ctx) { msg("rec-msg", "マイクの準備ができていません。最初の画面で許可を取ってください。"); showPage("welcome"); return; }
+  if (!S.ctx) { msg("rec-msg", "マイクの準備ができていません。最初の画面で許可を取ってください。"); showPage("perm"); return; }
   if (!S.patient) { msg("rec-msg", "患者情報がありません。情報を読み込んでください。"); return; }
   if (!S.ref) { msg("rec-msg", "先に基準音を録ってください。"); showPage("setup1"); return; }
   if (S.ctx.state !== "running") await S.ctx.resume().catch(() => {});
@@ -1313,7 +1313,7 @@ $("btn-ok").addEventListener("click", async () => {
   if (!S.refDone) showPage("setup1");
   else { syncRec(); showPage("record"); }
 });
-$("btn-ng").addEventListener("click", () => { pendingPatient = null; showPage("welcome"); });
+$("btn-ng").addEventListener("click", () => { pendingPatient = null; showPage("perm"); });
 
 /* セッティング */
 $("btn-setup1-next").addEventListener("click", () => openSetup2());
@@ -2023,7 +2023,7 @@ async function boot() {
   // まず画面を出す。保存の読み込みで止まっても、真っ黒にはしない。
   const hp = patientFromHash();
   if (hp) openConfirm(hp);
-  else showPage("welcome");
+  else showPage("perm");
   try {
     S.gainDb = parseFloat(localStorage.getItem("mockup-gain-db") || "0") || 0;
     S.calDb = parseFloat(localStorage.getItem("mockup-cal-db") || "0") || 0;
@@ -2043,8 +2043,8 @@ async function boot() {
     return;
   }
   if (hp) return;
-  if (S.page !== "welcome") return; // 読み込みの間にユーザーが操作していたら邪魔しない
-  if (!S.perms) showPage("welcome");
+  if (S.page !== "perm") return; // 読み込みの間にユーザーが操作していたら邪魔しない
+  if (!S.perms) showPage("perm");
   else if (!S.patient) showPage("home");
   else if (!S.refDone) showPage("setup1");
   else { syncRec(); showPage("record"); }
