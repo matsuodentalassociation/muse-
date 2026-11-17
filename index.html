@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>muse モックアップv5</title>
+<title>muse モックアップv7</title>
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box}
@@ -40,7 +40,8 @@ video{width:100%;border-radius:12px;background:#000}
 .scan-frame{border:2px solid #4a90d9;border-radius:12px;height:120px;display:flex;align-items:center;justify-content:center;color:#9aa5b1}
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
 .cal div{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border:1px solid #232d38;border-radius:8px;color:#9aa5b1;font-size:13px}
-.cal.mark{color:#fff;border-color:#4a90d9}
+.cal button{aspect-ratio:1;width:auto;padding:0;display:flex;align-items:center;justify-content:center;border:1px solid #232d38;border-radius:8px;background:transparent;color:#9aa5b1;font-size:13px}
+.cal button.has{color:#fff;border-color:#4a90d9;background:#1b242e}
 .graph-box{height:180px;border:1px solid #232d38;border-radius:12px;background:#0e1319}
 .tagrow{display:flex;gap:8px;flex-wrap:wrap}
 .tag{font-size:13px;border:1px solid #2a3643;border-radius:999px;padding:4px 10px;color:#c7d0da}
@@ -54,13 +55,13 @@ audio{width:100%}
     var raw = localStorage.getItem("slm_boot_html");
     var ver = localStorage.getItem("slm_boot_ver") || "";
     var m = /モックアップv(\d+)/.exec(ver);
-    if (raw && m && parseInt(m[1], 10) > 5) {
+    if (raw && m && parseInt(m[1], 10) > 7) {
       document.open(); document.write(raw); document.close();
     }
   } catch (e) { /* 通常の開き方に落ちる */ }
 })();
 </script>
-<script src="./ort.min.js?v=5"></script>
+<script src="./ort.min.js?v=7"></script>
 </head>
 <body>
 <p id="fatal-msg" class="err" hidden></p>
@@ -80,7 +81,7 @@ audio{width:100%}
 <button id="btn-to-mail" type="button">③ メールの情報を読み込む</button>
 <button id="btn-start" type="button">④ 睡眠記録を始める</button>
 <div class="card">
-<div class="field"><span>現在のバージョン</span><b>モックアップv5</b></div>
+<div class="field"><span>現在のバージョン</span><b>モックアップv7</b></div>
 <button id="btn-update" class="sub" type="button">アプリの更新</button>
 </div>
 <p id="home-msg" class="err" hidden></p>
@@ -235,7 +236,7 @@ audio{width:100%}
 </div>
 <section id="sh-del-card" class="card">
 <h2>保存済の音声データの削除</h2>
-<p class="muted">ZIPを保存できたことを確認してからを押し、次にを押してください。簡易ログとグラフは残ります。元に戻せません。</p>
+<p class="muted">ZIPを保存できたことを確認してから「ZIPを保存できた」を押し、次に「このタイムラインから音声を削除」を押してください。簡易ログとグラフは残ります。元に戻せません。</p>
 <button id="sh-saved-ok" type="button" disabled>ZIPを保存できた</button>
 <button id="sh-del" class="danger" type="button" disabled>このタイムラインから音声を削除</button>
 </section>
@@ -256,18 +257,18 @@ audio{width:100%}
 
 <script>
 "use strict";
-/* muse モックアップv5：清書（2026-11-14）の画面の枠に、V13の形の録音ロジックを入れた版（起動の画面名の直し）。
+/* muse モックアップv7：清書（2026-11-14）の画面の枠に、V13の形の録音ロジックを入れた版（起動の画面名の直し）。
    録音は生のPCMで保持し、圧縮は出力の時だけ。スライダーは保存する音に掛けない。 */
 
 /* ===== 版と更新 ===== */
-const APP_VERSION = "モックアップv5";
-const APP = "SomnoLogMockupV3";
+const APP_VERSION = "モックアップv7";
+const APP = "SomnoLogMockupV7";
 const UPD_REPO = "matsuodentalassociation/ST-mock-up";
 
 /* ===== 録音の定数（1か所に集約。検知の数は未決のため初期値は本番の現行値） ===== */
 const SR = 16000, FRAME = 512;
 const RING_SEC = 130;
-const VAD_CTX = 64, VAD_TH = 0.3, VAD_URL = "./silero_vad.onnx?v=5";
+const VAD_CTX = 64, VAD_TH = 0.3, VAD_URL = "./silero_vad.onnx?v=7";
 const LOUD_DB = 6, SEG_MIN = 0.5, SEG_MAX = 4, QUIET_FRAMES = 5;
 const PRE_MS = 3000, POST_MS = 5000;
 const CALIB_SEC = 300, BASE_EVERY = 600, POOL_MAX = 600, POOL_MIN = 60;
@@ -412,12 +413,16 @@ function showError(text) { msg("home-msg", text); }
 
 /* ===== 患者情報の受け取り ===== */
 function decodePatient(text) {
+  const t = String(text || "").trim();
+  const m = /slp=([A-Za-z0-9\-_]+)/.exec(t);
+  if (m) { const o = decodeSlp(m[1]); if (o) return o; }
+  if (/^[A-Za-z0-9\-_]+$/.test(t) && t.length > 20) { const o = decodeSlp(t); if (o) return o; }
   try {
-    const j = JSON.parse(text);
-    if (j && typeof j === "object") return j;
+    const j = JSON.parse(t);
+    if (j && typeof j === "object" && (j.clinicName || j.chartNo || j.patientName || j.serial)) return j;
   } catch (e) { /* 次の形式を試す */ }
   const p = {};
-  for (const line of String(text).split(/\r?\n/)) {
+  for (const line of t.split(/\r?\n/)) {
     const m = /^([^:：]+)[:：](.+)$/.exec(line.trim());
     if (!m) continue;
     const k = m[1].trim(), v = m[2].trim();
@@ -429,14 +434,18 @@ function decodePatient(text) {
   }
   return Object.keys(p).length ? p : null;
 }
+function decodeSlp(b64) {
+  try {
+    const b = String(b64).replace(/-/g, "+").replace(/_/g, "/");
+    const bin = atob(b + "=".repeat((4 - b.length % 4) % 4));
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    const o = JSON.parse(new TextDecoder().decode(bytes));
+    return o && typeof o === "object" ? o : null;
+  } catch (e) { return null; }
+}
 function patientFromHash() {
   if (!location.hash.startsWith("#slp=")) return null;
-  try {
-    const b64 = location.hash.slice(5).replace(/-/g, "+").replace(/_/g, "/");
-    const bin = atob(b64 + "=".repeat((4 - b64.length % 4) % 4));
-    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-    return JSON.parse(new TextDecoder().decode(bytes));
-  } catch (e) { return null; }
+  return decodeSlp(location.hash.slice(5));
 }
 let pendingPatient = null;
 function openConfirm(p) {
@@ -1149,6 +1158,7 @@ async function startRec() {
   if (!S.patient) { msg("rec-msg", "患者情報がありません。情報を読み込んでください。"); return; }
   if (!S.ref) { msg("rec-msg", "先に基準音を録ってください。"); showPage("setup1"); return; }
   if (S.ctx.state !== "running") await S.ctx.resume().catch(() => {});
+  if (!S.vad && S.vadPromise) await Promise.race([S.vadPromise, new Promise((r) => setTimeout(r, 3000))]);
 
   S.epoch++;
   S.sid = uid();
@@ -1283,14 +1293,19 @@ async function startScan() {
     v.srcObject = scanStream;
     await v.play();
     const det = new BarcodeDetector({ formats: ["qr_code"] });
+    let busy = false;
     scanTimer = setInterval(async () => {
+      if (busy) return;
       try {
         const codes = await det.detect(v);
         if (codes.length) {
-          stopScan();
+          busy = true;
           const p = decodePatient(codes[0].rawValue || "");
-          if (p) openConfirm(p);
-          else { msg("scan-msg", "患者情報を読み取れませんでした。"); showPage("scan"); }
+          if (p) { stopScan(); openConfirm(p); }
+          else {
+            msg("scan-msg", "患者情報を読み取れませんでした。もう一度かざしてください。");
+            setTimeout(() => { busy = false; }, 1200);
+          }
         }
       } catch (e) { /* 読み取り中 */ }
     }, 400);
@@ -1383,7 +1398,12 @@ async function openReview() {
     if (!byDay.has(k) || byDay.get(k).startedAt < s.startedAt) byDay.set(k, s);
   }
   const now = new Date();
-  const y = now.getFullYear(), m = now.getMonth();
+  let y = now.getFullYear(), m = now.getMonth();
+  if (sessions.length) {
+    const latest = sessions.reduce((a, b) => (a.startedAt > b.startedAt ? a : b));
+    const ld = new Date(latest.startedAt);
+    if (ld.getFullYear() !== y || ld.getMonth() !== m) { y = ld.getFullYear(); m = ld.getMonth(); }
+  }
   const grid = $("cal-grid");
   grid.innerHTML = "";
   const first = new Date(y, m, 1).getDay();
@@ -1431,7 +1451,7 @@ async function openDetail(sid) {
   $("dt-env").textContent = (c.env || 0) + "回";
   $("dt-avg").textContent = snores.length ? round1(mean(snores.map((e) => e.meanAppliedDb).filter((v) => v != null))) + "" : "—";
   $("dt-max").textContent = snores.length ? round1(Math.max(...snores.map((e) => e.peakAppliedDb).filter((v) => v != null))) + "" : "—";
-  $("dt-motion").textContent = TL.secs.filter((r) => r.motion != null && r.motion >= 0.3).length + "回";
+  $("dt-motion").textContent = TL.secs.filter((r) => r.motion != null && r.motion >= 0.05).length + "回";
   $("dt-size").textContent = mb(clips.reduce((s2, cl) => s2 + (cl.samples || 0) * 2, 0));
   const tags = document.querySelectorAll(".tagrow .tag");
   const vals = [
@@ -1439,7 +1459,7 @@ async function openDetail(sid) {
     "判定不能 " + (c.unknown || 0),
     "環境音 " + (c.env || 0),
     "人声 " + (c.speech || 0),
-    "体動 " + TL.secs.filter((r) => r.motion != null && r.motion >= 0.3).length
+    "体動 " + TL.secs.filter((r) => r.motion != null && r.motion >= 0.05).length
   ];
   tags.forEach((t, i) => { if (vals[i]) t.textContent = vals[i]; });
   msg("review-msg", "");
@@ -2029,7 +2049,7 @@ async function boot() {
     S.calDb = parseFloat(localStorage.getItem("mockup-cal-db") || "0") || 0;
   } catch (e) { /* 読めなければ0 */ }
   window.addEventListener("devicemotion", onMotion);
-  loadVad();
+  S.vadPromise = loadVad();
   try {
     const setup = await withTimeout(DB.kvGet("setup"), 3000);
     if (setup) { S.perms = !!setup.perms; S.refDone = !!setup.refDone; }
