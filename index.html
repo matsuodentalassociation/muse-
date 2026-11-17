@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>muse モックアップv7</title>
+<title>muse モックアップv8</title>
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box}
@@ -55,13 +55,13 @@ audio{width:100%}
     var raw = localStorage.getItem("slm_boot_html");
     var ver = localStorage.getItem("slm_boot_ver") || "";
     var m = /モックアップv(\d+)/.exec(ver);
-    if (raw && m && parseInt(m[1], 10) > 7) {
+    if (raw && m && parseInt(m[1], 10) > 8) {
       document.open(); document.write(raw); document.close();
     }
   } catch (e) { /* 通常の開き方に落ちる */ }
 })();
 </script>
-<script src="./ort.min.js?v=7"></script>
+<script src="./ort.min.js?v=8"></script>
 </head>
 <body>
 <p id="fatal-msg" class="err" hidden></p>
@@ -81,7 +81,7 @@ audio{width:100%}
 <button id="btn-to-mail" type="button">③ メールの情報を読み込む</button>
 <button id="btn-start" type="button">④ 睡眠記録を始める</button>
 <div class="card">
-<div class="field"><span>現在のバージョン</span><b>モックアップv7</b></div>
+<div class="field"><span>現在のバージョン</span><b>モックアップv8</b></div>
 <button id="btn-update" class="sub" type="button">アプリの更新</button>
 </div>
 <p id="home-msg" class="err" hidden></p>
@@ -257,18 +257,18 @@ audio{width:100%}
 
 <script>
 "use strict";
-/* muse モックアップv7：清書（2026-11-14）の画面の枠に、V13の形の録音ロジックを入れた版（起動の画面名の直し）。
+/* muse モックアップv8：清書（2026-11-14）の画面の枠に、V13の形の録音ロジックを入れた版（起動の画面名の直し）。
    録音は生のPCMで保持し、圧縮は出力の時だけ。スライダーは保存する音に掛けない。 */
 
 /* ===== 版と更新 ===== */
-const APP_VERSION = "モックアップv7";
-const APP = "SomnoLogMockupV7";
+const APP_VERSION = "モックアップv8";
+const APP = "SomnoLogMockupV8";
 const UPD_REPO = "matsuodentalassociation/ST-mock-up";
 
 /* ===== 録音の定数（1か所に集約。検知の数は未決のため初期値は本番の現行値） ===== */
 const SR = 16000, FRAME = 512;
 const RING_SEC = 130;
-const VAD_CTX = 64, VAD_TH = 0.3, VAD_URL = "./silero_vad.onnx?v=7";
+const VAD_CTX = 64, VAD_TH = 0.3, VAD_URL = "./silero_vad.onnx?v=8";
 const LOUD_DB = 6, SEG_MIN = 0.5, SEG_MAX = 4, QUIET_FRAMES = 5;
 const PRE_MS = 3000, POST_MS = 5000;
 const CALIB_SEC = 300, BASE_EVERY = 600, POOL_MAX = 600, POOL_MIN = 60;
@@ -353,22 +353,34 @@ const TL = { sess: null, evs: [], secs: [], winLen: 0, winStart: 0, tag: "all", 
 const DB = (() => {
   let p = null;
   const STORES = ["kv", "sessions", "secs", "events", "clips"];
-  function open() {
-    if (p) return p;
-    p = new Promise((res, rej) => {
-      const r = indexedDB.open("SomnoLogMockup", 2);
-      r.onupgradeneeded = () => {
-        const d = r.result;
-        if (!d.objectStoreNames.contains("kv")) d.createObjectStore("kv", { keyPath: "key" });
-        if (!d.objectStoreNames.contains("sessions")) d.createObjectStore("sessions", { keyPath: "id" });
-        if (!d.objectStoreNames.contains("secs")) { const s = d.createObjectStore("secs", { keyPath: "key" }); s.createIndex("sid", "sid"); }
-        if (!d.objectStoreNames.contains("events")) { const s = d.createObjectStore("events", { keyPath: "id" }); s.createIndex("sid", "sid"); }
-        if (!d.objectStoreNames.contains("clips")) { const s = d.createObjectStore("clips", { keyPath: "id" }); s.createIndex("sid", "sid"); }
-      };
+  function createMissing(d) {
+    if (!d.objectStoreNames.contains("kv")) d.createObjectStore("kv", { keyPath: "key" });
+    if (!d.objectStoreNames.contains("sessions")) d.createObjectStore("sessions", { keyPath: "id" });
+    if (!d.objectStoreNames.contains("secs")) { const s = d.createObjectStore("secs", { keyPath: "key" }); s.createIndex("sid", "sid"); }
+    if (!d.objectStoreNames.contains("events")) { const s = d.createObjectStore("events", { keyPath: "id" }); s.createIndex("sid", "sid"); }
+    if (!d.objectStoreNames.contains("clips")) { const s = d.createObjectStore("clips", { keyPath: "id" }); s.createIndex("sid", "sid"); }
+  }
+  function openOnce(ver) {
+    return new Promise((res, rej) => {
+      const r = ver ? indexedDB.open("SomnoLogMockup", ver) : indexedDB.open("SomnoLogMockup");
+      r.onupgradeneeded = () => createMissing(r.result);
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
       r.onblocked = () => rej(new Error("保存の更新が止められています。古い版のタブを閉じてから開き直してください。"));
     });
+  }
+  async function openImpl() {
+    let d = await openOnce();
+    const missing = STORES.some((s) => !d.objectStoreNames.contains(s));
+    if (missing) {
+      const v = d.version + 1;
+      d.close();
+      d = await openOnce(v);
+    }
+    return d;
+  }
+  function open() {
+    if (!p) p = openImpl().catch((e) => { p = null; throw e; });
     return p;
   }
   async function tx(store, mode, fn) {
