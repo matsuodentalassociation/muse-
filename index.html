@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>muse モックアップv11</title>
+<title>muse モックアップv14</title>
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box}
@@ -56,13 +56,12 @@ audio{width:100%}
     var raw = localStorage.getItem("slm_boot_html");
     var ver = localStorage.getItem("slm_boot_ver") || "";
     var m = /モックアップv(\d+)/.exec(ver);
-    if (raw && m && parseInt(m[1], 10) > 11) {
+    if (raw && m && parseInt(m[1], 10) > 14) {
       document.open(); document.write(raw); document.close();
     }
   } catch (e) { /* 通常の開き方に落ちる */ }
 })();
 </script>
-<script src="./ort.min.js?v=11"></script>
 </head>
 <body>
 <p id="fatal-msg" class="err" hidden></p>
@@ -82,7 +81,7 @@ audio{width:100%}
 <button id="btn-to-mail" type="button">③ メールの情報を読み込む</button>
 <button id="btn-start" type="button">④ 睡眠記録を始める</button>
 <div class="card">
-<div class="field"><span>現在のバージョン</span><b>モックアップv11</b></div>
+<div class="field"><span>現在のバージョン</span><b>モックアップv14</b></div>
 <button id="btn-update" class="sub" type="button">アプリの更新</button>
 </div>
 <p id="home-msg" class="err" hidden></p>
@@ -259,18 +258,19 @@ audio{width:100%}
 
 <script>
 "use strict";
-/* muse モックアップv11：清書（2026-11-14）の画面の枠に、V13の形の録音ロジックを入れた版（起動の画面名の直し）。
+/* muse モックアップv14：清書（2026-11-14）の画面の枠に、V13の形の録音ロジックを入れた版（起動の画面名の直し）。
    録音は生のPCMで保持し、圧縮は出力の時だけ。スライダーは保存する音に掛けない。 */
 
 /* ===== 版と更新 ===== */
-const APP_VERSION = "モックアップv11";
-const APP = "SomnoLogMockupV11";
+const APP_VERSION = "モックアップv14";
+const APP = "SomnoLogMockupV14";
 const UPD_REPO = "matsuodentalassociation/ST-mock-up";
 
 /* ===== 録音の定数（1か所に集約。検知の数は未決のため初期値は本番の現行値） ===== */
 const SR = 16000, FRAME = 512;
 const RING_SEC = 130;
-const VAD_CTX = 64, VAD_TH = 0.3, VAD_URL = "./silero_vad.onnx?v=11";
+const VAD_CTX = 64, VAD_TH = 0.3, VAD_URL = "./silero_vad.onnx?v=14";
+const VAD_REMOTE = "https://matsuodentalassociation.github.io/ST-SCOPE/";
 const LOUD_DB = 6, SEG_MIN = 0.5, SEG_MAX = 4, QUIET_FRAMES = 5;
 const PRE_MS = 3000, POST_MS = 5000;
 const CALIB_SEC = 300, BASE_EVERY = 600, POOL_MAX = 600, POOL_MIN = 60;
@@ -350,6 +350,24 @@ const S = {
 };
 const SH = { sid: null, zipDone: false, savedOk: false, picks: new Set(), pickList: [], zipName: "" };
 const TL = { sess: null, evs: [], secs: [], winLen: 0, winStart: 0, tag: "all", bin: -1, ceilAdj: 0, motTh: 0.05 };
+const TLV = { durSec: 0 };
+let playAnim = null;
+function stopPlayhead() { if (playAnim) cancelAnimationFrame(playAnim); playAnim = null; }
+function startPlayhead(fromSec) {
+  stopPlayhead();
+  const au = $("d-audio");
+  const step = () => {
+    if (au.paused || au.ended) { stopPlayhead(); return; }
+    const line = document.getElementById("cursor-line");
+    if (line && TLV.durSec) {
+      const x = (((fromSec + au.currentTime) / TLV.durSec) * 480).toFixed(1);
+      line.setAttribute("x1", x);
+      line.setAttribute("x2", x);
+    }
+    playAnim = requestAnimationFrame(step);
+  };
+  playAnim = requestAnimationFrame(step);
+}
 
 /* ===== 保存（モックアップ専用DB。kv＋記録用ストア） ===== */
 const DB = (() => {
@@ -861,22 +879,47 @@ async function loadRefAudioBytes() {
   return wavBytes(out, SR);
 }
 
-/* ===== 人声判定（Silero VAD） ===== */
+/* ===== 人声判定（Silero VAD） =====
+   部品は、まずこのアプリの隣を探し、無ければ本番（ST-SCOPE）の置き場所から読む。
+   このHTMLを1ファイルだけ上げても、人声判定が動くようにするための形。 */
+let vadBase = "./";
+function loadScriptOnce(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = () => res();
+    s.onerror = () => rej(new Error("script " + src));
+    document.head.appendChild(s);
+  });
+}
 async function loadVad() {
-  if (typeof ort === "undefined") { S.vad = null; S.vadOk = false; return; }
+  if (typeof ort === "undefined") {
+    try { await loadScriptOnce("./ort.min.js?v=14"); vadBase = "./"; }
+    catch (e) {
+      try { await loadScriptOnce(VAD_REMOTE + "ort.min.js"); vadBase = VAD_REMOTE; }
+      catch (e2) { console.warn(e2); S.vad = null; S.vadOk = false; return; }
+    }
+  }
   let buf;
   try {
     const r = await fetch(VAD_URL, { cache: "no-store" });
     if (!r.ok) throw new Error("HTTP " + r.status);
     buf = await r.arrayBuffer();
   } catch (e) {
-    console.warn(e);
-    S.vad = null; S.vadOk = false;
-    return;
+    try {
+      const r = await fetch(VAD_REMOTE + "silero_vad.onnx", { cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      buf = await r.arrayBuffer();
+      if (vadBase === "./") vadBase = VAD_REMOTE;
+    } catch (e2) {
+      console.warn(e2);
+      S.vad = null; S.vadOk = false;
+      return;
+    }
   }
   try {
     ort.env.wasm.numThreads = 1;
-    ort.env.wasm.wasmPaths = "./";
+    ort.env.wasm.wasmPaths = vadBase;
     S.vad = await ort.InferenceSession.create(buf, { executionProviders: ["wasm"] });
   } catch (e) {
     console.warn(e);
@@ -885,6 +928,7 @@ async function loadVad() {
   S.vadOk = !!S.vad;
 }
 async function vadProb(frame) {
+  if (!S.vadState) S.vadState = new ort.Tensor("float32", new Float32Array(2 * 1 * 128), [2, 1, 128]);
   const inp = new Float32Array(VAD_CTX + FRAME);
   inp.set(S.vadCtx, 0);
   inp.set(frame, VAD_CTX);
@@ -904,6 +948,11 @@ async function pump() {
     while (S.running && S.queue.length) {
       const f = S.queue.shift();
       if (f.ep !== S.epoch) continue;
+      if (!S.vadOk && S.vad) {
+        // 読み込みが記録の途中で終わったら、その時点から判定を始める。
+        S.vadOk = true;
+        if (S.sess && !S.sess.vadOk) { S.sess.vadOk = true; DB.put("sessions", S.sess).catch(() => {}); }
+      }
       let p = 0;
       if (S.vadOk) {
         // 判定への入力はエンジン時代と同じ条件にするため、スライダーを掛けた写しを使う（保存する音は生のまま）。
@@ -1521,12 +1570,14 @@ function detailDurSec() {
   if (sess.endedAt) return Math.max(1, Math.round((sess.endedAt - sess.startedAt) / 1000));
   return TL.secs.length ? TL.secs[TL.secs.length - 1].sec + 1 : 1;
 }
-/* グラフ：全体の棒グラフ（60本）。体動は上から重ね、あ〜の線と欠測を出す。 */
+/* グラフ：全体の棒グラフ（60本）。棒は「検知した音」だけを描く（1秒ごとの音の大きさそのものは描かない）。
+   体動は上から重ね、あ〜の線と欠測を出す。 */
 function renderGraph() {
   const box = document.querySelector("#detail-box .graph-box");
   if (!box || !TL.sess) return;
   const W = 480, H = 180, PT = 8, PB = 16, PH = H - PT - PB;
   const dur = detailDurSec();
+  TLV.durSec = dur;
   const binSec = dur / TL_BINS;
   const { refDb, envDb } = activeRefDb(TL.sess);
   let topDb = refDb + 6;
@@ -1552,19 +1603,22 @@ function renderGraph() {
     }
   }
   for (let i = 0; i < TL_BINS; i++) {
-    const a = i * binSec, b = a + binSec;
-    let v = null;
-    for (const r of TL.secs) if (r.sec >= a && r.sec < b && r.peakApplied != null) v = v == null ? r.peakApplied : Math.max(v, r.peakApplied);
-    if (v != null) {
-      const y = yOf(v);
-      svg += '<rect x="' + (i * W / TL_BINS + 0.5) + '" y="' + y + '" width="' + (W / TL_BINS - 1) + '" height="' + (PT + PH - y) + '" fill="' + TAG_COLOR.snore + '"/>';
+    const a = i * binSec * 1000, b = a + binSec * 1000;
+    let best = null;
+    for (const e of TL.evs) {
+      if (e.type === "env" || e.peakAppliedDb == null) continue;
+      if (e.endMs > a && e.startMs < b && (!best || e.peakAppliedDb > best.peakAppliedDb)) best = e;
+    }
+    if (best) {
+      const y = yOf(best.peakAppliedDb);
+      svg += '<rect x="' + (i * W / TL_BINS + 0.5) + '" y="' + y + '" width="' + (W / TL_BINS - 1) + '" height="' + (PT + PH - y) + '" fill="' + (TAG_COLOR[best.type] || TAG_COLOR.snore) + '"/>';
     }
   }
   const yRef = yOf(refDb);
   svg += '<line x1="0" y1="' + yRef + '" x2="' + W + '" y2="' + yRef + '" stroke="#f5c542" stroke-width="1"/>';
   if (TL.bin >= 0) {
     const x = (TL.bin + 0.5) * W / TL_BINS;
-    svg += '<line x1="' + x + '" y1="' + PT + '" x2="' + x + '" y2="' + (PT + PH) + '" stroke="#f5c542" stroke-width="1.4"/>';
+    svg += '<line id="cursor-line" x1="' + x + '" y1="' + PT + '" x2="' + x + '" y2="' + (PT + PH) + '" stroke="#f5c542" stroke-width="1.4"/>';
   }
   svg += '<text x="2" y="' + (H - 3) + '" fill="#9aa5b1" font-size="10">' + fmtClock(TL.sess.startedAt) + '</text>';
   svg += '<text x="' + (W - 52) + '" y="' + (H - 3) + '" fill="#9aa5b1" font-size="10">' + fmtClock(TL.sess.startedAt + dur * 1000) + '</text>';
@@ -1573,6 +1627,9 @@ function renderGraph() {
   svgEl.addEventListener("click", (e) => {
     const r = svgEl.getBoundingClientRect();
     TL.bin = clamp(Math.floor((e.clientX - r.left) / r.width * TL_BINS), 0, TL_BINS - 1);
+    const au = $("d-audio");
+    if (au && !au.paused) au.pause();
+    stopPlayhead();
     renderGraph();
   });
 }
@@ -1608,6 +1665,7 @@ $("btn-listen").addEventListener("click", async () => {
   if (!TL.sess) return;
   if (TL.bin < 0) { msg("review-msg", "グラフを押して、聴きたい棒を選んでください。"); return; }
   const dur = detailDurSec();
+  TLV.durSec = dur;
   const binSec = dur / TL_BINS;
   const fromMs = TL.bin * binSec * 1000;
   const toMs = fromMs + binSec * 1000;
@@ -1621,7 +1679,7 @@ $("btn-listen").addEventListener("click", async () => {
   au.src = detailUrl;
   au.hidden = false;
   msg("review-msg", "");
-  au.play().catch(() => {});
+  au.play().then(() => startPlayhead(fromMs / 1000)).catch(() => {});
 });
 $("btn-listen-ref").addEventListener("click", async () => {
   const ok = await playRefAudio();
