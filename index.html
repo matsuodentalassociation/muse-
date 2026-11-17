@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>muse モックアップv3</title>
+<title>muse モックアップv4</title>
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box}
@@ -54,15 +54,16 @@ audio{width:100%}
     var raw = localStorage.getItem("slm_boot_html");
     var ver = localStorage.getItem("slm_boot_ver") || "";
     var m = /モックアップv(\d+)/.exec(ver);
-    if (raw && m && parseInt(m[1], 10) > 3) {
+    if (raw && m && parseInt(m[1], 10) > 4) {
       document.open(); document.write(raw); document.close();
     }
   } catch (e) { /* 通常の開き方に落ちる */ }
 })();
 </script>
-<script src="./ort.min.js?v=3"></script>
+<script src="./ort.min.js?v=4"></script>
 </head>
 <body>
+<p id="fatal-msg" class="err" hidden></p>
 
 <!-- 1ページ　許可 -->
 <main id="page-perm" class="page" hidden>
@@ -79,7 +80,7 @@ audio{width:100%}
 <button id="btn-to-mail" type="button">③ メールの情報を読み込む</button>
 <button id="btn-start" type="button">④ 睡眠記録を始める</button>
 <div class="card">
-<div class="field"><span>現在のバージョン</span><b>モックアップv3</b></div>
+<div class="field"><span>現在のバージョン</span><b>モックアップv4</b></div>
 <button id="btn-update" class="sub" type="button">アプリの更新</button>
 </div>
 <p id="home-msg" class="err" hidden></p>
@@ -255,18 +256,18 @@ audio{width:100%}
 
 <script>
 "use strict";
-/* muse モックアップv3：清書（2026-11-14）の画面の枠に、V13の形の録音ロジックを入れた版。
+/* muse モックアップv4：清書（2026-11-14）の画面の枠に、V13の形の録音ロジックを入れた版（v3の起動の直し）。
    録音は生のPCMで保持し、圧縮は出力の時だけ。スライダーは保存する音に掛けない。 */
 
 /* ===== 版と更新 ===== */
-const APP_VERSION = "モックアップv3";
+const APP_VERSION = "モックアップv4";
 const APP = "SomnoLogMockupV3";
 const UPD_REPO = "matsuodentalassociation/ST-mock-up";
 
 /* ===== 録音の定数（1か所に集約。検知の数は未決のため初期値は本番の現行値） ===== */
 const SR = 16000, FRAME = 512;
 const RING_SEC = 130;
-const VAD_CTX = 64, VAD_TH = 0.3, VAD_URL = "./silero_vad.onnx?v=3";
+const VAD_CTX = 64, VAD_TH = 0.3, VAD_URL = "./silero_vad.onnx?v=4";
 const LOUD_DB = 6, SEG_MIN = 0.5, SEG_MAX = 4, QUIET_FRAMES = 5;
 const PRE_MS = 3000, POST_MS = 5000;
 const CALIB_SEC = 300, BASE_EVERY = 600, POOL_MAX = 600, POOL_MIN = 60;
@@ -316,6 +317,14 @@ function scalePos(db, envDb, refDb, topDb) {
   return clamp(0.5 + 0.5 * (db - refDb) / span, 0.5, 1);
 }
 
+/* エラーは画面に出す（真っ黒のまま止まらないように） */
+function showFatal(text) {
+  const el = $("fatal-msg");
+  if (el) { el.hidden = false; el.textContent = "エラー：" + text; }
+}
+window.addEventListener("error", (e) => showFatal(e.message || "不明なエラー"));
+window.addEventListener("unhandledrejection", (e) => showFatal((e.reason && e.reason.message) || String(e.reason)));
+
 /* ===== 状態 ===== */
 const S = {
   page: "welcome",
@@ -357,6 +366,7 @@ const DB = (() => {
       };
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
+      r.onblocked = () => rej(new Error("保存の更新が止められています。古い版のタブを閉じてから開き直してください。"));
     });
     return p;
   }
@@ -2003,27 +2013,41 @@ async function applyUpdate() {
 }
 
 /* ===== 起動 ===== */
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, rej) => setTimeout(() => rej(new Error("保存の読み込みが時間切れになりました")), ms))
+  ]);
+}
 async function boot() {
+  // まず画面を出す。保存の読み込みで止まっても、真っ黒にはしない。
+  const hp = patientFromHash();
+  if (hp) openConfirm(hp);
+  else showPage("welcome");
   try {
     S.gainDb = parseFloat(localStorage.getItem("mockup-gain-db") || "0") || 0;
     S.calDb = parseFloat(localStorage.getItem("mockup-cal-db") || "0") || 0;
   } catch (e) { /* 読めなければ0 */ }
-  try {
-    const setup = await DB.kvGet("setup");
-    if (setup) { S.perms = !!setup.perms; S.refDone = !!setup.refDone; }
-    const p = await DB.kvGet("patient");
-    if (p) S.patient = p;
-    const ref = await DB.kvGet("ref");
-    if (ref && typeof ref.db === "number") { S.ref = ref; S.refDone = true; }
-  } catch (e) { console.warn(e); }
   window.addEventListener("devicemotion", onMotion);
   loadVad();
-  const hp = patientFromHash();
-  if (hp) { openConfirm(hp); return; }
+  try {
+    const setup = await withTimeout(DB.kvGet("setup"), 3000);
+    if (setup) { S.perms = !!setup.perms; S.refDone = !!setup.refDone; }
+    const p = await withTimeout(DB.kvGet("patient"), 3000);
+    if (p) S.patient = p;
+    const ref = await withTimeout(DB.kvGet("ref"), 3000);
+    if (ref && typeof ref.db === "number") { S.ref = ref; S.refDone = true; }
+  } catch (e) {
+    console.warn(e);
+    showFatal("保存された情報を読み込めませんでした。" + (e.message || ""));
+    return;
+  }
+  if (hp) return;
+  if (S.page !== "welcome") return; // 読み込みの間にユーザーが操作していたら邪魔しない
   if (!S.perms) showPage("welcome");
   else if (!S.patient) showPage("home");
   else if (!S.refDone) showPage("setup1");
-  else { syncRec(); showPage("rec"); }
+  else { syncRec(); showPage("record"); }
 }
 boot();
 </script>
