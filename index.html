@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>muse モックアップv9</title>
+<title>muse モックアップv10</title>
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box}
@@ -55,13 +55,13 @@ audio{width:100%}
     var raw = localStorage.getItem("slm_boot_html");
     var ver = localStorage.getItem("slm_boot_ver") || "";
     var m = /モックアップv(\d+)/.exec(ver);
-    if (raw && m && parseInt(m[1], 10) > 9) {
+    if (raw && m && parseInt(m[1], 10) > 10) {
       document.open(); document.write(raw); document.close();
     }
   } catch (e) { /* 通常の開き方に落ちる */ }
 })();
 </script>
-<script src="./ort.min.js?v=9"></script>
+<script src="./ort.min.js?v=10"></script>
 </head>
 <body>
 <p id="fatal-msg" class="err" hidden></p>
@@ -81,7 +81,7 @@ audio{width:100%}
 <button id="btn-to-mail" type="button">③ メールの情報を読み込む</button>
 <button id="btn-start" type="button">④ 睡眠記録を始める</button>
 <div class="card">
-<div class="field"><span>現在のバージョン</span><b>モックアップv9</b></div>
+<div class="field"><span>現在のバージョン</span><b>モックアップv10</b></div>
 <button id="btn-update" class="sub" type="button">アプリの更新</button>
 </div>
 <p id="home-msg" class="err" hidden></p>
@@ -176,6 +176,7 @@ audio{width:100%}
 <button id="btn-rec-black" class="primary" type="button" hidden>⑫ 黒画面に切り替える</button>
 <button id="btn-rec-stop" type="button" hidden>⑬ 停止（2秒以上長押し）</button>
 <button id="btn-to-calendar" class="sub" type="button">⑭ 記録カレンダーを見る</button>
+<button id="btn-to-setup" class="sub" type="button">設定に戻る（基準音・音圧調整）</button>
 </main>
 
 <!-- 黒画面 -->
@@ -257,18 +258,18 @@ audio{width:100%}
 
 <script>
 "use strict";
-/* muse モックアップv9：清書（2026-11-14）の画面の枠に、V13の形の録音ロジックを入れた版（起動の画面名の直し）。
+/* muse モックアップv10：清書（2026-11-14）の画面の枠に、V13の形の録音ロジックを入れた版（起動の画面名の直し）。
    録音は生のPCMで保持し、圧縮は出力の時だけ。スライダーは保存する音に掛けない。 */
 
 /* ===== 版と更新 ===== */
-const APP_VERSION = "モックアップv9";
-const APP = "SomnoLogMockupV9";
+const APP_VERSION = "モックアップv10";
+const APP = "SomnoLogMockupV10";
 const UPD_REPO = "matsuodentalassociation/ST-mock-up";
 
 /* ===== 録音の定数（1か所に集約。検知の数は未決のため初期値は本番の現行値） ===== */
 const SR = 16000, FRAME = 512;
 const RING_SEC = 130;
-const VAD_CTX = 64, VAD_TH = 0.3, VAD_URL = "./silero_vad.onnx?v=9";
+const VAD_CTX = 64, VAD_TH = 0.3, VAD_URL = "./silero_vad.onnx?v=10";
 const LOUD_DB = 6, SEG_MIN = 0.5, SEG_MAX = 4, QUIET_FRAMES = 5;
 const PRE_MS = 3000, POST_MS = 5000;
 const CALIB_SEC = 300, BASE_EVERY = 600, POOL_MAX = 600, POOL_MIN = 60;
@@ -905,7 +906,7 @@ async function pump() {
       let p = 0;
       if (S.vadOk) {
         // 判定への入力はエンジン時代と同じ条件にするため、スライダーを掛けた写しを使う（保存する音は生のまま）。
-        try { p = await vadProb(gainScale(f.data)); }
+        try { p = await Promise.race([vadProb(gainScale(f.data)), new Promise((_, rej) => setTimeout(() => rej(new Error("人声判定が時間切れになりました")), 1500))]); }
         catch (e) {
           console.error(e);
           S.vadOk = false;
@@ -1214,12 +1215,16 @@ async function startRec() {
   syncRec();
 }
 async function stopRec() {
-  if (!S.running) return;
+  if (!S.running || S.stopping) return;
   // 停止の確定：新しい音を受け付けず、残っている音を全部処理し、保存が終わってから確定する。
   S.stopping = true;
+  $("btn-rec-stop").hidden = true;
+  $("btn-rec-black").hidden = true;
+  msg("rec-msg", "停止しています…");
   S.timers.forEach(clearInterval);
   S.timers = [];
-  for (let i = 0; i < 200 && S.queue.length; i++) {
+  const stopDeadline = Date.now() + 5000;
+  for (let i = 0; i < 200 && S.queue.length && Date.now() < stopDeadline; i++) {
     await pump();
     if (S.queue.length && !S.busy) break;
     if (S.queue.length) await new Promise((r) => setTimeout(r, 5));
@@ -1377,6 +1382,10 @@ $("btn-setup-done").addEventListener("click", async () => {
 /* 記録 */
 $("btn-rec-start").addEventListener("click", () => startRec());
 $("btn-to-calendar").addEventListener("click", () => openReview());
+$("btn-to-setup").addEventListener("click", () => {
+  if (S.running) { msg("rec-msg", "記録中は設定に戻れません。先に停止してください。"); return; }
+  openSetup2();
+});
 let stopTimer = null;
 $("btn-rec-stop").addEventListener("pointerdown", (e) => {
   e.preventDefault();
@@ -1384,6 +1393,7 @@ $("btn-rec-stop").addEventListener("pointerdown", (e) => {
 });
 $("btn-rec-stop").addEventListener("pointerup", () => { if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; } });
 $("btn-rec-stop").addEventListener("pointerleave", () => { if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; } });
+$("btn-rec-stop").addEventListener("pointercancel", () => { if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; } });
 
 /* 黒画面 */
 let blackTimer = null, clockTimer = null;
