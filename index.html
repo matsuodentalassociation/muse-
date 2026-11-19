@@ -8,9 +8,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#090d16">
 <meta name="color-scheme" content="dark">
-<meta name="somnolog-app" content="somnolog-real-v13">
-<meta name="somnolog-build" content="SomnoLog-V13">
-<title>SomnoLog V13 SomnoLog-V13</title>
+<meta name="somnolog-app" content="somnolog-real-v14">
+<meta name="somnolog-build" content="SomnoLog-V14">
+<title>SomnoLog V14 SomnoLog-V14</title>
 <style>
 :root {
   --bg: #090d16;
@@ -233,7 +233,7 @@ button:disabled {
   margin-top: 20px;
 }
 
-/* ダイアログスタイル (V13特有の共有ダイアログ) */
+/* ダイアログスタイル (V14 共有・修正ダイアログ) */
 dialog {
   background: var(--card);
   color: var(--text);
@@ -281,7 +281,7 @@ dialog p.note {
   <div class="brand">
     🌙 SomnoLog
   </div>
-  <div class="build-badge" id="build-bar">SomnoLog V13 ｜ SomnoLog-V13</div>
+  <div class="build-badge" id="build-bar">SomnoLog V14 ｜ SomnoLog-V14</div>
 </header>
 
 <main>
@@ -354,14 +354,14 @@ dialog p.note {
   <div id="night-hint">画面タップで時刻点灯 / 1.5秒長押しで画面復帰</div>
 </div>
 
-<!-- 共有の確認・エラーダイアログ (V13仕様) -->
+<!-- 共有の確認・エラーダイアログ (V14：Backspace対策・宛先コピーボタン復活・ZIP保存先ボタン維持) -->
 <dialog id="share-error-dialog">
   <h2>共有の確認</h2>
   <p id="share-error-text" class="note">計測ログのパッケージングが完了しました。医師へ送信するか、ローカルに保存してください。</p>
   <div class="dialog-stack">
     <a id="share-error-save" class="button" download="SomnoLog_Session.zip" hidden>ZIPを保存する</a>
     <button id="share-open-folder" class="button secondary" type="button">ZIP保存先を開く</button>
-    <button id="btn-copy-email" class="button secondary" type="button" disabled>宛先をコピー (未設定)</button>
+    <button id="btn-copy-email" class="button secondary" type="button">宛先をコピー</button>
     <p class="hint">保存したZIPをメールに添付して医療機関へ送付してください。自動的な外部送信は行われません。</p>
     <button class="button secondary" id="btn-dialog-close" type="button">閉じる</button>
   </div>
@@ -371,10 +371,11 @@ dialog p.note {
 (() => {
   "use strict";
 
-  // V13 定数定義
-  const VERSION = "SomnoLog-V13";
+  // V14 定数定義 (ID・ビルド番号をSomnoLog-V14に正式更新)
+  const VERSION = "SomnoLog-V14";
   const DB_NAME = "SomnoLog.real.v7";
   const DB_VERSION = 2;
+  let targetClinicEmail = "clinic-sample@example.com"; // 設定・QR読み込みからの宛先メール
 
   // DOM要素参照
   const btnStart = document.getElementById("btn-start");
@@ -393,6 +394,7 @@ dialog p.note {
   const nightClock = document.getElementById("night-clock");
   const shareDialog = document.getElementById("share-error-dialog");
   const btnOpenFolder = document.getElementById("share-open-folder");
+  const btnCopyEmail = document.getElementById("btn-copy-email");
   const btnDialogClose = document.getElementById("btn-dialog-close");
 
   // 内部状態
@@ -407,10 +409,21 @@ dialog p.note {
   let dbBuffer = [];
   let wakeLock = null;
 
-  // V13 誤操作対策: 入力項目外でのBackspaceキーによるバックナビゲーション防止
+  // V14 修正要件1: 誤操作による画面逆流の完全阻止 (Backspace & Alt+Left Arrow 抑止)
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Backspace" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) {
+    const targetTag = e.target ? e.target.tagName : "";
+    const isInput = ["INPUT", "TEXTAREA"].includes(targetTag);
+    if ((e.key === "Backspace" || (e.altKey && e.key === "ArrowLeft")) && !isInput) {
       e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
+
+  // V14 修正要件2: ブラウザの戻る操作(popstate)で誤ってQR読取画面へ戻るのを防ぎ、記録画面を保持
+  history.pushState({ page: "recording" }, "", location.href);
+  window.addEventListener("popstate", (e) => {
+    if (isRecording) {
+      history.pushState({ page: "recording" }, "", location.href);
     }
   });
 
@@ -588,12 +601,30 @@ dialog p.note {
     setTimeout(() => nightClock.classList.remove("lit"), 3000);
   });
 
-  // 共有ボタンクリック (V13ダイアログ表示)
+  // 共有ボタンクリック (V14ダイアログ表示)
   btnShare.addEventListener("click", () => {
+    if (targetClinicEmail) {
+      btnCopyEmail.disabled = false;
+      btnCopyEmail.textContent = `宛先をコピー (${targetClinicEmail})`;
+    } else {
+      btnCopyEmail.disabled = true;
+      btnCopyEmail.textContent = "宛先未設定";
+    }
     shareDialog.showModal();
   });
 
-  // V13 新規機能: ZIP保存先を開く案内ボタン
+  // V14 修正要件3: 宛先メールアドレスのクリップボードコピー処理
+  btnCopyEmail.addEventListener("click", async () => {
+    if (!targetClinicEmail) return;
+    try {
+      await navigator.clipboard.writeText(targetClinicEmail);
+      alert(`診療所宛先メールアドレスをコピーしました:\n${targetClinicEmail}`);
+    } catch (err) {
+      prompt("以下のメールアドレスをコピーしてください:", targetClinicEmail);
+    }
+  });
+
+  // V14 維持機能: ZIP保存先を開く案内ボタン
   btnOpenFolder.addEventListener("click", () => {
     alert("ダウンロードが完了しました。\nブラウザーの「メニュー（⋮）」→「ダウンロード」から保存されたZIPファイルを確認し、メールに添付してください。");
   });
